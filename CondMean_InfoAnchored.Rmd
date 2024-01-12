@@ -30,17 +30,17 @@ knitr::opts_chunk$set(
 
 This vignette shows how to obtain information-anchored inference using conditional mean imputation combined with a resampling method such as jackknife or bootstrap as resampling. 
 
-The method follows a proposal by Lu (2021). They suggested to obtain the variance for reference-based imputation methods by decoupling variance estimation from treatment effect estimation. To achieve this, they replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. In the following, we show that this can be easily implemented using `rbmi`. 
+The method follows a proposal by @lu2021alternative. They suggested to obtain the variance for reference-based imputation methods by decoupling variance estimation from treatment effect estimation. To achieve this, they replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. In the following, we show that this can be easily implemented using `rbmi`. 
 
 For more information on the statistical background of this method, please refer to the vignette describing the statistical specifications of the package (`vignette(topic = "stat_specs", package = "rbmi")`). 
 
-## Data and model specification
+# Data and model specification
 
 We use a publicly available example dataset from an antidepressant clinical trial of an active drug versus placebo. The relevant endpoint is the Hamilton 17-item depression rating scale (HAMD17) which was assessed at baseline and at weeks 1, 2, 4, and 6. Study drug discontinuation occurred in 24% of subjects from the active drug and 26% of subjects from placebo. All data after study drug discontinuation are missing and there is a single additional intermittent missing observation.
 
 We consider an imputation model with the mean change from baseline in the HAMD17 score as the outcome (variable CHANGE in the dataset). The following covariates are included in the imputation model: the treatment group (THERAPY), the (categorical) visit (VISIT), treatment-by-visit interactions, the baseline HAMD17 score (BASVAL), and baseline HAMD17 score-by-visit interactions. A common unstructured covariance matrix structure is assumed for both groups. The analysis model is an ANCOVA model with the treatment group as the primary factor and adjustment for the baseline HAMD17 score. For this example, we assume that the imputation strategy after the ICE "study-drug discontinuation" is Jump To Reference (JR) for all subjects and the imputation is based on conditional mean imputation with jackknife as resampling. 
 
-## Draws
+# Draws
 
 We will make use of `rbmi::expand_locf()` to expand the dataset in order to have one row per subject per visit with missing outcomes denoted as `NA`. We will then construct the `data_ice`, `vars` and `method` input arguments to the first core `rbmi` function, `draws()`. For further the details on the specification of these arguments, please refer to the quickstart vignette (`vignette(topic = "stat_specs", package = "rbmi"`) and to the helper functions.
 
@@ -52,24 +52,24 @@ dat <- antidepressant_data
 
 # Use expand_locf to add rows corresponding to visits with missing outcomes to the dataset
 dat <- expand_locf(
-    dat,
-    PATIENT = levels(dat$PATIENT), # expand by PATIENT and VISIT 
-    VISIT = levels(dat$VISIT),
-    vars = c("BASVAL", "THERAPY"), # fill with LOCF BASVAL and THERAPY
-    group = c("PATIENT"),
-    order = c("PATIENT", "VISIT")
+  dat,
+  PATIENT = levels(dat$PATIENT), # expand by PATIENT and VISIT 
+  VISIT = levels(dat$VISIT),
+  vars = c("BASVAL", "THERAPY"), # fill with LOCF BASVAL and THERAPY
+  group = c("PATIENT"),
+  order = c("PATIENT", "VISIT")
 )
 
 # create data_ice and set the imputation strategy to JR for
 # each patient with at least one missing observation
 dat_ice <- dat %>% 
-    arrange(PATIENT, VISIT) %>% 
-    filter(is.na(CHANGE)) %>% 
-    group_by(PATIENT) %>% 
-    slice(1) %>%
-    ungroup() %>% 
-    select(PATIENT, VISIT) %>% 
-    mutate(strategy = "JR")
+  arrange(PATIENT, VISIT) %>% 
+  filter(is.na(CHANGE)) %>% 
+  group_by(PATIENT) %>% 
+  slice(1) %>%
+  ungroup() %>% 
+  select(PATIENT, VISIT) %>% 
+  mutate(strategy = "JR")
 
 # In this dataset, subject 3618 has an intermittent missing values which does not correspond
 # to a study drug discontinuation. We therefore remove this subject from `dat_ice`. 
@@ -79,11 +79,11 @@ dat_ice <- dat_ice[-which(dat_ice$PATIENT == 3618),]
 # Define the names of key variables in our dataset and
 # the covariates included in the imputation model using `set_vars()`
 vars <- set_vars(
-    outcome = "CHANGE",
-    visit = "VISIT",
-    subjid = "PATIENT",
-    group = "THERAPY",
-    covariates = c("BASVAL*VISIT", "THERAPY*VISIT")
+  outcome = "CHANGE",
+  visit = "VISIT",
+  subjid = "PATIENT",
+  group = "THERAPY",
+  covariates = c("BASVAL*VISIT", "THERAPY*VISIT")
 )
 
 # Define which imputation method to use (here: conditional mean imputation with jackknife as resampling) 
@@ -91,91 +91,148 @@ method <- method_condmean(type = "jackknife")
 
 # Create samples for the imputation parameters by running the draws() function
 drawObj <- draws(
-    data = dat,
-    data_ice = dat_ice,
-    vars = vars,
-    method = method,
-    quiet = TRUE
+  data = dat,
+  data_ice = dat_ice,
+  vars = vars,
+  method = method,
+  quiet = TRUE
 )
 drawObj
 ```
 
-## Imputation phase including calculation of delta-adjustment
+# Imputation phase including calculation of delta-adjustment
 
 We aim to obtain the information-anchored variance for reference-based imputation methods by decoupling variance estimation from treatment effect estimation. To achieve this, we replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. Using rbmi, we first need to perform the imputation under the defined strategy (here JR) and under MAR, separately. Then we access the imputed datasets and we compute the difference between the imputation under JR and the imputation under MAR. This will give us the delta-adjustment that we can add on top of the MAR imputation to match the JR imputation.
 
 ```{r}
-
 references <- c("DRUG" = "PLACEBO", "PLACEBO" = "PLACEBO")
 
 # Impute under JR
 res_imp <- impute(
-      draws = drawObj,
-      update_strategy = dat_ice,
-      references = references
-    )
-    
-    # Access imputed dataset (index=1 for method_condmean(type = "jackknife"))
-    cmi <- extract_imputed_dfs(res_imp, index = 1, idmap = TRUE)[[1]] %>%
-      dplyr::select(PATIENT, VISIT, CHANGE) %>%
-      rename(y_imp = CHANGE)
-    
-    # Map back original patients id since rbmi re-code ids to ensure id uniqueness
-    cmi <- cmi %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)) 
-    
-    # Derive conditional mean imputations under MAR
-    dat_ice_MAR <- dat_ice %>%
-      mutate(strategy = ifelse(strategy %in% c("CIR","CR","JR"), "MAR", strategy))
-    
-    # Impute under MAR
-    impute_obj_MAR <- impute(
-      drawObj,
-      update_strategy = dat_ice_MAR
-    ) # if there are observed post-ICE data, this would give a warning which can be ignored here 
-    
-    # Take imputed outcome
-    cmi_MAR <- extract_imputed_dfs(impute_obj_MAR, index = 1, idmap = TRUE)[[1]] %>%
-      dplyr::select(PATIENT, VISIT, CHANGE) %>%
-      rename(y_MAR = CHANGE)
-    
-    # Map back original patients id since rbmi re-code ids to ensure id uniqueness
-    cmi_MAR <- cmi_MAR %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi_MAR)$idmap), levels = attributes(cmi_MAR)$idmap)) 
-    
-    # Derive delta adjustment "aligned with ref-based imputation", i.e difference between JR and MAR imputation
-    delta_adjust <- full_join(cmi, cmi_MAR, by = c("PATIENT", "VISIT")) %>%
-      mutate(delta = y_imp - y_MAR)
+  draws = drawObj,
+  update_strategy = dat_ice,
+  references = references
+)
+
+# Access imputed dataset (index=1 for method_condmean(type = "jackknife"))
+cmi <- extract_imputed_dfs(res_imp, index = 1, idmap = TRUE)[[1]] %>%
+  dplyr::select(PATIENT, VISIT, CHANGE) %>%
+  rename(y_imp = CHANGE)
+
+# Map back original patients id since rbmi re-code ids to ensure id uniqueness
+cmi <- cmi %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)) 
+
+# Derive conditional mean imputations under MAR
+dat_ice_MAR <- dat_ice %>%
+  mutate(strategy = ifelse(strategy %in% c("CIR","CR","JR"), "MAR", strategy))
+
+# Impute under MAR
+impute_obj_MAR <- impute(
+  drawObj,
+  update_strategy = dat_ice_MAR
+) # if there are observed post-ICE data, this would give a warning which can be ignored here 
+
+# Take imputed outcome
+cmi_MAR <- extract_imputed_dfs(impute_obj_MAR, index = 1, idmap = TRUE)[[1]] %>%
+  dplyr::select(PATIENT, VISIT, CHANGE) %>%
+  rename(y_MAR = CHANGE)
+
+# Map back original patients id since rbmi re-code ids to ensure id uniqueness
+cmi_MAR <- cmi_MAR %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi_MAR)$idmap), levels = attributes(cmi_MAR)$idmap)) 
+
+# Derive delta adjustment "aligned with ref-based imputation", i.e difference between JR and MAR imputation
+delta_adjust <- full_join(cmi, cmi_MAR, by = c("PATIENT", "VISIT")) %>%
+  mutate(delta = y_imp - y_MAR)
 ```
 
-## Analyse
+# Analyse
 
-We can now perform the analysis of the imputed datasets after adding the delta-adjustment. `analyse()` will take as the input argument `imputations` the imputation object corresponding to the MAR imputation (and not the JR imputation!) and will add the delta adjustment `delta` prior to the analysis.
+We use the function `analyse()` to add the delta-adjustment and perform the analysis of the imputed datasets. `analyse()` will take as the input argument `imputations = impute_obj_MAR`, i.e. the imputation object corresponding to the MAR imputation (and not the JR imputation!) and will add the delta adjustment `delta = delta_adjust` prior to the analysis.
 
 ```{r}
 
-    # Set analysis variables using rbmi function "set_vars"
-    vars_an <- set_vars(
-      group = vars$group,
-      visit = vars$visit,
-      outcome = vars$outcome,
-      covariates = "BASVAL"
-    )
-    
-    # Analyse MAR imputation with derived delta adjustment
-    anaObj_MAR_delta <- analyse(
-      impute_obj_MAR,
-      rbmi::ancova,
-      delta = delta_adjust,
-      vars = vars_an
-    )
+# Set analysis variables using rbmi function "set_vars"
+vars_an <- set_vars(
+  group = vars$group,
+  visit = vars$visit,
+  outcome = vars$outcome,
+  covariates = "BASVAL"
+)
+
+# Analyse MAR imputation with derived delta adjustment
+anaObj_MAR_delta <- analyse(
+  impute_obj_MAR,
+  rbmi::ancova,
+  delta = delta_adjust,
+  vars = vars_an
+)
 ```
 
-## Pool
+# Pool
 
-We can finally use the `pool()` function to extract the treatment effect estimate (as well as the estimated marginal means) at each visit and apply the jackknife variance estimator using the analysis of all the imputed leave-one-out samples.
+We can finally use the `pool()` function to extract the treatment effect estimate (as well as the estimated marginal means) at each visit and apply the jackknife variance estimator to the analysis estimates from all the imputed leave-one-out samples.
 
 ```{r}
-  
-   poolObj_MAR_delta <- pool(anaObj_MAR_delta)
 
+poolObj_MAR_delta <- pool(anaObj_MAR_delta)
 poolObj_MAR_delta
+```
+
+# Function to derive the delta-adjustment that matches the reference based imputation
+
+```{r}
+
+get_delta_match_refBased <- function(draws, data_ice, references) {
+  
+  vars <- draws$data$vars
+  
+  # Impute under defined imputation strategy
+  res_imp <- impute(
+    draws = draws,
+    update_strategy = data_ice,
+    references = references
+  )
+  
+  # Access imputed dataset (index=1 for method_condmean(type = "jackknife"))
+  cmi <- extract_imputed_dfs(res_imp, index = 1, idmap = TRUE)[[1]] %>%
+    dplyr::select(vars$subjid, vars$visit, vars$outcome) %>%
+    rename(y_imp = !!as.symbol(vars$outcome))
+  
+  # Map back original patients id since rbmi re-code ids to ensure id uniqueness
+  cmi <- cmi %>% mutate(
+    !!vars$subjid := factor(recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)
+    )
+  
+  # Derive conditional mean imputations under MAR
+  dat_ice_MAR <- data_ice %>%
+    mutate(!!vars$strategy := ifelse(!!as.symbol(vars$strategy) %in% c("CIR","CR","JR"), "MAR", strategy))
+  
+  # Impute under MAR
+  impute_obj_MAR <- impute(
+    draws,
+    update_strategy = dat_ice_MAR
+  ) # if there are observed post-ICE data, this would give a warning which can be ignored here 
+  
+  # Take imputed outcome
+  cmi_MAR <- extract_imputed_dfs(impute_obj_MAR, index = 1, idmap = TRUE)[[1]] %>%
+    dplyr::select(vars$subjid, vars$visit, vars$outcome) %>%
+    rename(y_MAR = !!as.symbol(vars$outcome))
+  
+  # Map back original patients id since rbmi re-code ids to ensure id uniqueness
+  cmi_MAR <- cmi_MAR %>% mutate(
+    !!vars$subjid := factor(recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)
+    )
+  
+  # Derive delta adjustment "aligned with ref-based imputation", i.e difference between JR and MAR imputation
+  delta_adjust <- full_join(cmi, cmi_MAR, by = c(vars$subjid, vars$visit)) %>%
+    mutate(delta = y_imp - y_MAR)
+  
+  return(delta_adjust)
+}
+
+
+delta_adjust_fun <- get_delta_match_refBased(drawObj, dat_ice, references)
+head(delta_adjust_fun)
+
+identical(delta_adjust, delta_adjust_fun)
 ```
