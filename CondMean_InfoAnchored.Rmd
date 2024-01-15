@@ -120,11 +120,21 @@ cmi <- extract_imputed_dfs(imputeObj, index = 1, idmap = TRUE)[[1]] %>%
   rename(y_imp = CHANGE)
 
 # Map back original patients id since rbmi re-code ids to ensure id uniqueness
-cmi <- cmi %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)) 
+cmi <- cmi %>% mutate(
+  PATIENT = factor(
+    recode(PATIENT, !!! attributes(cmi)$idmap), 
+    levels = attributes(cmi)$idmap
+    )
+  ) 
 
 # Derive conditional mean imputations under MAR
-dat_ice_MAR <- dat_ice %>%
-  mutate(strategy = ifelse(strategy %in% c("CIR","CR","JR"), "MAR", strategy))
+dat_ice_MAR <- dat_ice %>% mutate(
+  strategy = ifelse(
+    strategy %in% c("CIR","CR","JR"),
+    "MAR",
+    strategy
+    )
+  )
 
 # Impute under MAR
 imputeObj_MAR <- impute(
@@ -138,9 +148,15 @@ cmi_MAR <- extract_imputed_dfs(imputeObj_MAR, index = 1, idmap = TRUE)[[1]] %>%
   rename(y_MAR = CHANGE)
 
 # Map back original patients id since rbmi re-code ids to ensure id uniqueness
-cmi_MAR <- cmi_MAR %>% mutate(PATIENT = factor(recode(PATIENT, !!! attributes(cmi_MAR)$idmap), levels = attributes(cmi_MAR)$idmap)) 
+cmi_MAR <- cmi_MAR %>% mutate(
+  PATIENT = factor(
+    recode(PATIENT, !!! attributes(cmi_MAR)$idmap), 
+    levels = attributes(cmi_MAR)$idmap
+    )
+  ) 
 
-# Derive delta adjustment "aligned with ref-based imputation", i.e difference between JR and MAR imputation
+# Derive delta adjustment "aligned with ref-based imputation",
+# i.e difference between JR and MAR imputation
 delta_adjust <- full_join(cmi, cmi_MAR, by = c("PATIENT", "VISIT")) %>%
   mutate(delta = y_imp - y_MAR)
 ```
@@ -196,12 +212,20 @@ get_delta_match_refBased <- function(draws, imputations, data_ice) {
   
   # Map back original patients id since rbmi re-code ids to ensure id uniqueness
   cmi <- cmi %>% mutate(
-    !!vars$subjid := factor(recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)
+    !!vars$subjid := factor(
+      recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap),
+      levels = attributes(cmi)$idmap
+      )
     )
   
   # Derive conditional mean imputations under MAR
-  dat_ice_MAR <- data_ice %>%
-    mutate(!!vars$strategy := ifelse(!!as.symbol(vars$strategy) %in% c("CIR","CR","JR"), "MAR", strategy))
+  dat_ice_MAR <- data_ice %>% mutate(
+    !!vars$strategy := ifelse(
+      !!as.symbol(vars$strategy) %in% c("CIR","CR","JR"),
+      "MAR", 
+      strategy
+      )
+    )
   
   # Impute under MAR
   imputeObj_MAR <- impute(
@@ -216,10 +240,14 @@ get_delta_match_refBased <- function(draws, imputations, data_ice) {
   
   # Map back original patients id since rbmi re-code ids to ensure id uniqueness
   cmi_MAR <- cmi_MAR %>% mutate(
-    !!vars$subjid := factor(recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap), levels = attributes(cmi)$idmap)
+    !!vars$subjid := factor(
+      recode(!!as.symbol(vars$subjid), !!! attributes(cmi)$idmap),
+      levels = attributes(cmi)$idmap
+      )
     )
   
-  # Derive delta adjustment "aligned with ref-based imputation", i.e difference between JR and MAR imputation
+  # Derive delta adjustment "aligned with ref-based imputation",
+  # i.e. difference between ref-based imputation and MAR imputation
   delta_adjust <- full_join(cmi, cmi_MAR, by = c(vars$subjid, vars$visit)) %>%
     mutate(delta = y_imp - y_MAR)
   
