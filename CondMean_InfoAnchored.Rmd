@@ -28,13 +28,17 @@ knitr::opts_chunk$set(
 
 # Introduction
 
-This vignette shows how to obtain frequentist and information-anchored inference using conditional mean imputation combined with a resampling method such as jackknife or bootstrap. 
+For reference-based imputation methods, two different types of variance estimators have been proposed in the statistical literature. The first is the frequentist variance which describes the actual repeated sampling variability of the estimator. If the reference-based missing data assumption is correctly specified, then the resulting inference based on this variance is correct in the frequentist sense, i.e. hypothesis tests have accurate type I error control and confidence intervals have correct coverage
+probabilities under repeated sampling [@Bartlett2021, @Wolbers2021]. However, as a consequence of the strong reference-based missingness assumption which borrows information from the control arm for estimation in the active arm, the size of frequentist standard errors for treatment effects may increase with increasing amounts of missing data. The second is the so-called "information-anchored" variance [@Cro2019]. This variance estimator is based on disentangling point estimation and variance estimation altogether. The resulting information-anchored variance is typically very similar to the variance under missing-at-random (MAR) imputation and increases with increasing amounts of missing data. However, this information-anchored variance does not reflect the actual variability of the reference-based estimator and the resulting frequentist inference is highly conservative resulting in a substantial power loss. Moreover, to date, no Bayesian
+or frequentist framework has been developed under which the "information-anchored variance provides
+correct inference under reference-based assumptions, nor is it clear whether such a framework can even be developed.
 
-Conditional mean imputation combined with a resampling method such as jackknife or bootstrap was first introduced by @wolbers2022standard. As described in the paper, the method naturally targets a frequentist estimation of the standard error of the treatment effect under MAR or under reference-based assumptions. However, the method can also target an information-anchored inference. Indeed, following a proposal by @lu2021alternative, it is possible obtain the information-anchored variance by decoupling variance estimation from treatment effect estimation. To achieve this, they replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. 
+Reference-based conditional mean imputation combined with a resampling method such as the jackknife or the bootstrap was first introduced in @Wolbers2021. This approach naturally targets the frequentist variance. The information-anchored variance is typically estimated using Rubin's rules for Bayesian multiple imputation which is not available within the conditional mean imputation framework. However, an alternative information-anchored variance proposed by @Lu2021 can easily be obtained as we show below. The basic idea of @Lu2021 is to obtain the information-anchored variance via a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. For conditional mean imputation, the proposal by @Lu2021 can be implemented by choosing the delta-
+adjustment as the difference between the conditional mean imputation under the chosen reference-based assumption and MAR on the original dataset. The variance can then be obtained via the jackknife or the bootstrap while keeping the delta-adjustment fixed. The resulting variance estimate is very similar to Rubin's variance. Moreover as shown in @Cro2019, the variance of MAR-imputation combined with a delta-adjustment achieves even better information-anchoring properties than Rubin's variance for reference-based imputation.  
 
-This vignette first shows how to obtain frequentist inference using conditional mean imputation using `rbmi`, and then shows that an information-anchored inference can also be easily implemented using the package. 
+This vignette demonstrates first how to obtain frequentist inference using reference-based conditional mean imputation using `rbmi`, and then shows that an information-anchored inference can also be easily implemented using the package. 
 
-For more information on the statistical background of this method, please refer to the vignette describing the statistical specifications of the package (`vignette(topic = "stat_specs", package = "rbmi")`). 
+For more information on the statistical background of these methods, please refer to the vignette describing the statistical specifications of the package (`vignette(topic = "stat_specs", package = "rbmi")`). 
 
 # Data and model specification
 
@@ -42,13 +46,15 @@ We use a publicly available example dataset from an antidepressant clinical tria
 
 We consider an imputation model with the mean change from baseline in the HAMD17 score as the outcome (variable CHANGE in the dataset). The following covariates are included in the imputation model: the treatment group (THERAPY), the (categorical) visit (VISIT), treatment-by-visit interactions, the baseline HAMD17 score (BASVAL), and baseline HAMD17 score-by-visit interactions. A common unstructured covariance matrix structure is assumed for both groups. The analysis model is an ANCOVA model with the treatment group as the primary factor and adjustment for the baseline HAMD17 score. For this example, we assume that the imputation strategy after the ICE "study-drug discontinuation" is Jump To Reference (JR) for all subjects and the imputation is based on conditional mean imputation with jackknife as resampling (a bootstrap could also have been selected).
 
-# Conditional mean imputation - Frequentist inference
+# Reference-based conditional mean imputation - frequentist inference
 
-Conditional mean imputation combined with a resampling method such as jackknife or bootstrap naturally targets a frequentist estimation of the standard error of the treatment effect, thus providing a valid frequentist inference. Here we provide the code of how to obtain the standard frequentist inference with conditional mean imputation combined with jaccknife using `rbmi`.
+Conditional mean imputation combined with a resampling method such as jackknife or bootstrap naturally targets a frequentist estimation of the standard error of the treatment effect, thus providing a valid frequentist inference. Here we provide the code of how to obtain the standard frequentist inference with conditional mean imputation combined with jaccknife using `rbmi`. 
+
+The code used in this section is almost identical to the code in the quickstart vignette (`vignette(topic = "quickstart", package = "rbmi")`) except that we use conditional mean imputation combined with the jackknife (`method_condmean(type = "jackknife")`) here rather than Bayesian multiple imputation (`method_bayes()`). We therefore refer to that vignette and the help files for the individual functions for further details.  
 
 ## Draws {#draws}
 
-We will make use of `rbmi::expand_locf()` to expand the dataset in order to have one row per subject per visit with missing outcomes denoted as `NA`. We will then construct the `data_ice`, `vars` and `method` input arguments to the first core `rbmi` function, `draws()`. For further the details on the specification of these arguments, please refer to the quickstart vignette (`vignette(topic = "stat_specs", package = "rbmi"`) and to the helper functions. Finally, we call the function `draws()` to derive the parameter estimates of the base imputation model fit on the data and on all leave-one-out samples.
+We will make use of `rbmi::expand_locf()` to expand the dataset in order to have one row per subject per visit with missing outcomes denoted as `NA`. We will then construct the `data_ice`, `vars` and `method` input arguments to the first core `rbmi` function, `draws()`. Finally, we call the function `draws()` to derive the parameter estimates of the base imputation model for the full dataset and all leave-one-subject-out samples.
 
 ```{r draws_condmean}
 library(rbmi)
@@ -145,15 +151,19 @@ anaObj
 Finally, we can extract the treatment effect estimates and perform inference using the jackknife variance estimator. This is done by calling the `pool()` function.
 
 ```{r}
-
 poolObj <- pool(anaObj)
 poolObj
 ```
 
+This gives an estimated mean difference of 
+`r paste(formatC(poolObj$pars$trt_7$est,format="f",digits=2)," (95% CI ", 
+         formatC(poolObj$pars$trt_7$ci[1],format="f",digits=2), " to ",
+         formatC(poolObj$pars$trt_7$ci[2],format="f",digits=2),")",sep="")`
+between the two groups at the last visit with an associated p-value of `r formatC(poolObj$pars$trt_7$pval,format="f",digits=3)`.
 
-# Conditional mean imputation - Information-Anchored inference
+# Reference-based conditional mean imputation - information-anchored inference
 
-We present now how the estimation process based on conditional mean imputation combined with jackknife can be adapted to get an information-anchored inference. 
+We present now how the estimation process based on conditional mean imputation combined with jackknife can be adapted to obtain an information-anchored variance following the proposal by @Lu2021. 
 
 ## Draws
 
@@ -165,13 +175,13 @@ The code for the pre-processing of the dataset and for the "draws" step is equiv
 
 ```
 
-## Imputation phase including calculation of delta-adjustment
+## Imputation step including calculation of delta-adjustment
 
-We aim to obtain an information-anchored estimate of the variance for reference-based imputation methods by decoupling variance estimation from treatment effect estimation. To achieve this, we replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. Using `rbmi`, we first need to perform the imputation under the defined strategy (here JR) and under MAR, separately. Then we access the imputed datasets and we compute the difference between the imputation under JR and the imputation under MAR. This will give us the delta-adjustment that we can add on top of the MAR imputation to match the JR imputation.
+The proposal by @Lu2021 is to replace the reference-based imputation by a MAR imputation combined with a delta-adjustment where delta is selected in a data-driven way to match the reference-based estimator. In `rbmi`, this is implemented by first performing the imputation under the defined reference-based imputation strategy (here JR) as well as under MAR separately. Second, the delta-adjustment is defined as the difference between the conditional mean imputation under reference-based and MAR imputation, respectively, on the original dataset.  
 
 To simplify the implementation, we have written a function that performs this step.
 The function takes as input arguments the `draws` object, `data_ice` (i.e. the `data.frame` containing the information about the intercurrent events and the imputation strategies), and `references`, a named vector that identifies the references to be used for reference-based imputation methods. 
-The function returns a list containing the `imputations` objects obtained by imputing as per `data_ice` and under MAR, and a `data.frame` which contains the delta-adjustment.
+The function returns a list containing the imputation objects under both reference-based and MAR imputation, plus a `data.frame` which contains the delta-adjustment.
 
 ```{r}
 
@@ -249,7 +259,7 @@ res_delta_adjust <- get_delta_match_refBased(drawObj, dat_ice, references)
 
 ## Analyse
 
-We use the function `analyse()` to add the delta-adjustment and perform the analysis of the imputed datasets. `analyse()` will take as the input argument `imputations = res_delta_adjust$imputeObj_MAR`, i.e. the imputation object corresponding to the MAR imputation (and not the JR imputation!). The argument `delta` can be used to add a delta-adjustment prior to the analysis. This time, we will set `delta = res_delta_adjust$delta_adjust` that we have derived at the previous step.
+We use the function `analyse()` to add the delta-adjustment and perform the analysis of the imputed datasets. `analyse()` will take as the input argument `imputations = res_delta_adjust$imputeObj_MAR`, i.e. the imputation object corresponding to the MAR imputation (and not the JR imputation). The argument `delta` can be used to add a delta-adjustment prior to the analysis and we set this to the delta-adjustment obtained in the previous step: `delta = res_delta_adjust$delta_adjust`.
 
 ```{r}
 
@@ -280,6 +290,11 @@ poolObj_MAR_delta <- pool(anaObj_MAR_delta)
 poolObj_MAR_delta
 ```
 
-If we compare the results obtained by this approach with the frequentist estimates, we can notice that the point estimates are equivalent, while the standard errors (and thus confidence intervals and p-values) differ. In particular, the information-anchored inference overestimates the frequentist standard error under a reference-based imputation. For details on this, please refer to @wolbers2022standard. 
+This gives an estimated mean difference of 
+`r paste(formatC(poolObj_MAR_delta$pars$trt_7$est,format="f",digits=2)," (95% CI ", 
+         formatC(poolObj_MAR_delta$pars$trt_7$ci[1],format="f",digits=2), " to ",
+         formatC(poolObj_MAR_delta$pars$trt_7$ci[2],format="f",digits=2),")",sep="")`
+between the two groups at the last visit with an associated p-value of `r formatC(poolObj_MAR_delta$pars$trt_7$pval,format="f",digits=3)`. 
+Per construction of the delta-adjustment, the point estimate is identical to the frequentist analysis. However, its standard error is much larger (`r formatC(poolObj_MAR_delta$pars$trt_7$se,format="f",digits=2)` vs. `r formatC(poolObj$pars$trt_7$se,format="f",digits=2)`). Indeed, the information-anchored standard error is similar to the standard error obtained for Rubin's rule and Baysesian multiple imputation of `r 1.13` reported in the quickstart vignette (`vignette(topic = "quickstart", package = "rbmi"`). However, as shown e.g. in @Wolbers2021, information-anchored inference is very conservative, i.e. its actual type I error is much lower than the nominal value. Hence, the resulting confidence intervals and $p$-values based on information-anchored inference should be interpreted with caution.
 
 # References {.unlisted .unnumbered}
